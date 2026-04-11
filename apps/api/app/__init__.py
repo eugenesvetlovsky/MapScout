@@ -1,0 +1,1 @@
+# MapScout API package

@@ -1,0 +1,12 @@
+{
+  "name": "@mapscout/api",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "build": "python -m compileall app",
+    "lint": "ruff check app && black --check app && mypy app",
+    "format": "black app",
+    "test": "pytest -q"
+  }
+}
