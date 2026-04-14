@@ -191,42 +191,45 @@ export default function App() {
   return (
     <div className="layout">
       <aside className="sidebar" onClick={closePlaceCard}>
-        <h1>MapScout</h1>
-        <p className="muted">Nearby places guide</p>
-        <input
-          className="account-input"
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          onClick={(event) => event.stopPropagation()}
-          placeholder="Search places in selected category..."
-        />
+        <div className="sidebar-top">
+          <h1>MapScout</h1>
+          <p className="muted">Nearby places guide</p>
+          <input
+            className="account-input"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            placeholder="Search places in selected category..."
+          />
 
-        <div className="categories">
-          {categories.map((item) => (
-            <button
-              key={item}
-              className={`${item === category ? 'active' : ''} ${item === 'all' ? 'all-category' : ''}`.trim()}
-              onClick={(event) => {
-                event.stopPropagation();
-                setCategory(item);
-              }}
-            >
-              {item}
-            </button>
-          ))}
+          <div className="categories">
+            {categories.map((item) => (
+              <button
+                key={item}
+                className={`${item === category ? 'active' : ''} ${item === 'all' ? 'all-category' : ''}`.trim()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setCategory(item);
+                }}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+
+          {location.error && <p className="error">{location.error}</p>}
+          {nearbyQuery.isLoading && <p className="muted">Loading nearby places...</p>}
+          {!nearbyQuery.isLoading && location.coords && filteredPlaces.length === 0 && (
+            <p className="muted">No places in this category nearby.</p>
+          )}
         </div>
-
-        {location.error && <p className="error">{location.error}</p>}
-        {nearbyQuery.isLoading && <p className="muted">Loading nearby places...</p>}
-        {!nearbyQuery.isLoading && location.coords && filteredPlaces.length === 0 && (
-          <p className="muted">No places in this category nearby.</p>
-        )}
-        <PlacesList
-          places={filteredPlaces}
-          selectedPlaceId={selectedPlaceId}
-          onSelect={(place) => goToPlace(place)}
-        />
-
+        <div className="sidebar-list-host">
+          <PlacesList
+            places={filteredPlaces}
+            selectedPlaceId={selectedPlaceId}
+            onSelect={(place) => goToPlace(place)}
+          />
+        </div>
       </aside>
 
       <main className="map-panel">

@@ -87,6 +87,13 @@ export function MapView({
   selectedPlaceId,
 }: Props) {
   const center = coords ?? fallbackCenter;
+  const selectedPlace = selectedPlaceId
+    ? places.find((p) => p.id === selectedPlaceId) ?? null
+    : null;
+  const clusteredPlaces = selectedPlaceId
+    ? places.filter((p) => p.id !== selectedPlaceId)
+    : places;
+
   return (
     <MapContainer center={[center.lat, center.lon]} zoom={14} className="map">
       <RecenterOnUser coords={coords} />
@@ -95,15 +102,24 @@ export function MapView({
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       {coords && <Marker position={[coords.lat, coords.lon]} icon={userIcon} />}
       <MarkerClusterGroup chunkedLoading>
-        {places.map((place) => (
+        {clusteredPlaces.map((place) => (
           <Marker
             key={place.id}
             position={[place.coordinates.lat, place.coordinates.lon]}
-            icon={selectedPlaceId && place.id === selectedPlaceId ? selectedPlaceIcon : placeIcon}
+            icon={placeIcon}
             eventHandlers={{ click: () => onSelectPlace(place) }}
           />
         ))}
       </MarkerClusterGroup>
+      {selectedPlace && (
+        <Marker
+          key={`selected-${selectedPlace.id}`}
+          position={[selectedPlace.coordinates.lat, selectedPlace.coordinates.lon]}
+          icon={selectedPlaceIcon}
+          zIndexOffset={1000}
+          eventHandlers={{ click: () => onSelectPlace(selectedPlace) }}
+        />
+      )}
       {routePoints.length > 1 && (
         <Polyline
           positions={routePoints}

@@ -11,13 +11,36 @@ body,
   display: grid;
   grid-template-columns: 360px 1fr;
   height: 100%;
+  min-height: 0;
 }
 
 .sidebar {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
   padding: 16px;
   border-right: 1px solid #e5e7eb;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
+}
+
+.sidebar-top {
+  flex-shrink: 0;
+}
+
+.sidebar-list-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+
+.places-list-measure {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
 }
 
 .map-panel,
