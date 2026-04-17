@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import L from 'leaflet';
-import { MapContainer, Marker, Polyline, TileLayer } from 'react-leaflet';
+import { MapContainer, Marker, Polyline, TileLayer, Tooltip } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import type { Place } from '@mapscout/shared-types';
 import { useMap, useMapEvents } from 'react-leaflet';
@@ -13,10 +13,15 @@ type Props = {
   focusPoint: { lat: number; lon: number; tick: number } | null;
   onSelectPlace: (place: Place) => void;
   onMapClick?: () => void;
-  selectedPlaceId?: string | null;
+  selectedPlaceKey?: string | null;
+  favoritePlaceKeys?: Set<string>;
 };
 
 const fallbackCenter = { lat: 55.751244, lon: 37.618423 };
+
+function buildPlaceKey(place: { id: string; category: Place['category']; coordinates: { lat: number; lon: number } }): string {
+  return `${place.id}::${place.category}::${place.coordinates.lat.toFixed(6)}::${place.coordinates.lon.toFixed(6)}`;
+}
 
 const userIcon = L.divIcon({
   html: '<div class="user-pin"><span class="user-pin-dot"></span></div>',
@@ -34,6 +39,20 @@ const placeIcon = L.divIcon({
 
 const selectedPlaceIcon = L.divIcon({
   html: '<div class="place-pin selected"><span></span></div>',
+  className: 'place-pin-wrapper',
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
+});
+
+const favoritePlaceIcon = L.divIcon({
+  html: '<div class="place-pin favorite"><span></span></div>',
+  className: 'place-pin-wrapper',
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
+});
+
+const selectedFavoritePlaceIcon = L.divIcon({
+  html: '<div class="place-pin selected favorite"><span></span></div>',
   className: 'place-pin-wrapper',
   iconSize: [20, 20],
   iconAnchor: [10, 10],
@@ -84,14 +103,15 @@ export function MapView({
   focusPoint,
   onSelectPlace,
   onMapClick,
-  selectedPlaceId,
+  selectedPlaceKey,
+  favoritePlaceKeys,
 }: Props) {
   const center = coords ?? fallbackCenter;
-  const selectedPlace = selectedPlaceId
-    ? places.find((p) => p.id === selectedPlaceId) ?? null
+  const selectedPlace = selectedPlaceKey
+    ? places.find((p) => buildPlaceKey(p) === selectedPlaceKey) ?? null
     : null;
-  const clusteredPlaces = selectedPlaceId
-    ? places.filter((p) => p.id !== selectedPlaceId)
+  const clusteredPlaces = selectedPlaceKey
+    ? places.filter((p) => buildPlaceKey(p) !== selectedPlaceKey)
     : places;
 
   return (
@@ -104,21 +124,33 @@ export function MapView({
       <MarkerClusterGroup chunkedLoading>
         {clusteredPlaces.map((place) => (
           <Marker
-            key={place.id}
+            key={buildPlaceKey(place)}
             position={[place.coordinates.lat, place.coordinates.lon]}
-            icon={placeIcon}
+            icon={favoritePlaceKeys?.has(buildPlaceKey(place)) ? favoritePlaceIcon : placeIcon}
             eventHandlers={{ click: () => onSelectPlace(place) }}
-          />
+          >
+            <Tooltip direction="top" offset={[0, -12]} className="place-tooltip">
+              <strong>{place.name}</strong>
+              <br />
+              <span>{place.category}</span>
+            </Tooltip>
+          </Marker>
         ))}
       </MarkerClusterGroup>
       {selectedPlace && (
         <Marker
-          key={`selected-${selectedPlace.id}`}
+          key={`selected-${buildPlaceKey(selectedPlace)}`}
           position={[selectedPlace.coordinates.lat, selectedPlace.coordinates.lon]}
-          icon={selectedPlaceIcon}
+          icon={favoritePlaceKeys?.has(buildPlaceKey(selectedPlace)) ? selectedFavoritePlaceIcon : selectedPlaceIcon}
           zIndexOffset={1000}
           eventHandlers={{ click: () => onSelectPlace(selectedPlace) }}
-        />
+        >
+          <Tooltip direction="top" offset={[0, -12]} className="place-tooltip">
+            <strong>{selectedPlace.name}</strong>
+            <br />
+            <span>{selectedPlace.category}</span>
+          </Tooltip>
+        </Marker>
       )}
       {routePoints.length > 1 && (
         <Polyline

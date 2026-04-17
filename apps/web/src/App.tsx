@@ -8,7 +8,9 @@ import { useCurrentLocation } from './useCurrentLocation';
 
 type UiCategory = PlaceCategory | 'all';
 const categories: UiCategory[] = ['all', 'cafe', 'park', 'museum', 'restaurant', 'landmark', 'hotel'];
-const HISTORY_KEY = 'mapscout_history_guest';
+const allPlaceCategories: PlaceCategory[] = ['cafe', 'park', 'museum', 'restaurant', 'landmark', 'hotel'];
+const FAVORITES_KEY = 'mapscout_history_guest';
+const VIEWED_HISTORY_KEY = 'mapscout_viewed_history_guest';
 
 type VisitRecord = {
   id: string;
@@ -20,6 +22,26 @@ type VisitRecord = {
   at: string;
   coordinates: { lat: number; lon: number };
 };
+
+type ViewedRecord = VisitRecord & {
+  viewedAt: string;
+};
+
+function buildPlaceKey(place: { id: string; category: PlaceCategory; coordinates: { lat: number; lon: number } }): string {
+  return `${place.id}::${place.category}::${place.coordinates.lat.toFixed(6)}::${place.coordinates.lon.toFixed(6)}`;
+}
+
+function visitRecordToPlace(item: VisitRecord): Place {
+  return {
+    id: item.id,
+    name: item.name,
+    category: item.category,
+    description: item.description,
+    photoUrl: item.photoUrl,
+    distance: item.distance,
+    coordinates: item.coordinates,
+  };
+}
 
 function distanceMeters(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
   const earth = 6371000;
@@ -34,19 +56,40 @@ function distanceMeters(a: { lat: number; lon: number }, b: { lat: number; lon: 
 }
 
 export default function App() {
-  const [category, setCategory] = useState<UiCategory>('all');
+  const [selectedCategories, setSelectedCategories] = useState<UiCategory[]>(['all']);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [selectedPlaceKey, setSelectedPlaceKey] = useState<string | null>(null);
   const [selectedFromHistory, setSelectedFromHistory] = useState<Place | null>(null);
   const [showRoute, setShowRoute] = useState(false);
-  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [showFavoritesPanel, setShowFavoritesPanel] = useState(false);
+  const [showViewedPanel, setShowViewedPanel] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [focusPoint, setFocusPoint] = useState<{ lat: number; lon: number; tick: number } | null>(null);
   const location = useCurrentLocation();
+  const activeCategories = useMemo<PlaceCategory[]>(
+    () =>
+      selectedCategories.includes('all')
+        ? allPlaceCategories
+        : (selectedCategories as PlaceCategory[]),
+    [selectedCategories],
+  );
 
   const nearbyQuery = useQuery({
-    queryKey: ['nearby', location.coords?.lat, location.coords?.lon, category],
-    queryFn: ({ signal }) =>
-      fetchNearby(location.coords!.lat, location.coords!.lon, category, signal),
+    queryKey: ['nearby', location.coords?.lat, location.coords?.lon, [...activeCategories].sort().join('|')],
+    queryFn: async ({ signal }) => {
+      const responses = await Promise.all(
+        activeCategories.map((item) => fetchNearby(location.coords!.lat, location.coords!.lon, item, signal)),
+      );
+      const byId = new Map<string, Place>();
+      for (const response of responses) {
+        for (const place of response.places) {
+          const placeKey = buildPlaceKey(place);
+          if (!byId.has(placeKey)) byId.set(placeKey, place);
+        }
+      }
+      return { places: [...byId.values()].sort((a, b) => a.distance - b.distance) };
+    },
     enabled: !!location.coords,
   });
 
@@ -58,8 +101,11 @@ export default function App() {
 
   const places = nearbyQuery.data?.places ?? [];
   const selectedPlace = useMemo(
-    () => places.find((place) => place.id === selectedPlaceId) ?? null,
-    [places, selectedPlaceId],
+    () =>
+      places.find((place) =>
+        selectedPlaceKey ? buildPlaceKey(place) === selectedPlaceKey : place.id === selectedPlaceId,
+      ) ?? null,
+    [places, selectedPlaceId, selectedPlaceKey],
   );
   const selectedPlaceDetails = placeDetailsQuery.data ?? selectedPlace ?? selectedFromHistory;
   const routeQuery = useQuery({
@@ -69,39 +115,63 @@ export default function App() {
     enabled: !!(showRoute && location.coords && selectedPlaceDetails),
   });
 
-  const [history, setHistory] = useState<VisitRecord[]>([]);
+  const [favorites, setFavorites] = useState<VisitRecord[]>([]);
+  const [viewedHistory, setViewedHistory] = useState<ViewedRecord[]>([]);
 
   useEffect(() => {
-    const raw = localStorage.getItem(HISTORY_KEY);
+    const raw = localStorage.getItem(FAVORITES_KEY);
     if (!raw) {
-      setHistory([]);
-      return;
+      setFavorites([]);
+    } else {
+      const parsed = JSON.parse(raw) as Array<Partial<VisitRecord>>;
+      const normalized: VisitRecord[] = parsed.map((item) => ({
+        id: item.id ?? crypto.randomUUID(),
+        name: item.name ?? 'Unknown place',
+        category: (item.category as PlaceCategory) ?? 'landmark',
+        description: item.description ?? 'Visited place',
+        photoUrl: item.photoUrl,
+        distance: item.distance ?? 0,
+        at: item.at ?? new Date().toISOString(),
+        coordinates: item.coordinates ?? { lat: 0, lon: 0 },
+      }));
+      setFavorites(normalized);
     }
-    const parsed = JSON.parse(raw) as Array<Partial<VisitRecord>>;
-    const normalized: VisitRecord[] = parsed.map((item) => ({
-      id: item.id ?? crypto.randomUUID(),
-      name: item.name ?? 'Unknown place',
-      category: (item.category as PlaceCategory) ?? 'landmark',
-      description: item.description ?? 'Visited place',
-      photoUrl: item.photoUrl,
-      distance: item.distance ?? 0,
-      at: item.at ?? new Date().toISOString(),
-      coordinates: item.coordinates ?? { lat: 0, lon: 0 },
-    }));
-    setHistory(normalized);
+
+    const viewedRaw = localStorage.getItem(VIEWED_HISTORY_KEY);
+    if (!viewedRaw) {
+      setViewedHistory([]);
+    } else {
+      const parsedViewed = JSON.parse(viewedRaw) as Array<Partial<ViewedRecord>>;
+      const normalizedViewed: ViewedRecord[] = parsedViewed.map((item) => ({
+        id: item.id ?? crypto.randomUUID(),
+        name: item.name ?? 'Unknown place',
+        category: (item.category as PlaceCategory) ?? 'landmark',
+        description: item.description ?? 'Viewed place',
+        photoUrl: item.photoUrl,
+        distance: item.distance ?? 0,
+        at: item.at ?? new Date().toISOString(),
+        viewedAt: item.viewedAt ?? item.at ?? new Date().toISOString(),
+        coordinates: item.coordinates ?? { lat: 0, lon: 0 },
+      }));
+      setViewedHistory(normalizedViewed);
+    }
   }, []);
 
-  const removeVisit = (placeId: string) => {
-    const next = history.filter((item) => item.id !== placeId);
-    setHistory(next);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+  const removeFavorite = (place: { id: string; category: PlaceCategory; coordinates: { lat: number; lon: number } }) => {
+    const targetKey = buildPlaceKey(place);
+    const next = favorites.filter((item) => buildPlaceKey(item) !== targetKey);
+    setFavorites(next);
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
   };
 
-  const toggleVisit = () => {
+  const toggleFavorite = () => {
     if (!selectedPlaceDetails) return;
-    const exists = history.some((item) => item.id === selectedPlaceDetails.id);
+    const selectedKey = buildPlaceKey(selectedPlaceDetails);
+    const exists = favorites.some((item) => buildPlaceKey(item) === selectedKey);
     if (exists) {
-      removeVisit(selectedPlaceDetails.id);
+      const next = favorites.filter((item) => buildPlaceKey(item) !== selectedKey);
+      setFavorites(next);
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
       return;
     }
     const record: VisitRecord = {
@@ -114,9 +184,9 @@ export default function App() {
       at: new Date().toISOString(),
       coordinates: selectedPlaceDetails.coordinates,
     };
-    const next = [record, ...history].slice(0, 40);
-    setHistory(next);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+    const next = [record, ...favorites].slice(0, 40);
+    setFavorites(next);
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
   };
 
   const effectiveDistance =
@@ -126,25 +196,48 @@ export default function App() {
       : 600);
   const estimatedMinutes = selectedPlaceDetails ? Math.max(2, Math.round(effectiveDistance / 80)) : 0;
   const fallbackImage = 'https://placehold.co/640x360?text=MapScout+Place';
-  const isVisited = !!selectedPlaceDetails && history.some((item) => item.id === selectedPlaceDetails.id);
+  const isFavorite = !!selectedPlaceDetails && favorites.some((item) => buildPlaceKey(item) === buildPlaceKey(selectedPlaceDetails));
+  const favoritePlaceKeys = useMemo(() => new Set(favorites.map((item) => buildPlaceKey(item))), [favorites]);
 
   const filteredPlaces = places.filter((place) =>
     place.name.toLowerCase().includes(searchTerm.trim().toLowerCase()),
   );
-  const mapPlaces = useMemo(() => {
-    if (!selectedPlaceDetails) return filteredPlaces;
-    const exists = filteredPlaces.some((item) => item.id === selectedPlaceDetails.id);
-    return exists
-      ? filteredPlaces
-      : [...filteredPlaces, { ...selectedPlaceDetails, distance: selectedPlace?.distance ?? effectiveDistance }];
-  }, [filteredPlaces, selectedPlaceDetails, selectedPlace, effectiveDistance]);
 
-  const goToPlace = (place: { id: string; coordinates: { lat: number; lon: number } }) => {
-    if (selectedPlaceId === place.id && !selectedFromHistory) {
+  const mapSourcePlaces = useMemo(() => {
+    // Map markers should stay stable regardless of search input.
+    // Favorites are added only for currently active categories.
+    const byKey = new Map<string, Place>();
+    for (const place of places) {
+      byKey.set(buildPlaceKey(place), place);
+    }
+    for (const favorite of favorites) {
+      if (!activeCategories.includes(favorite.category)) continue;
+      const place = visitRecordToPlace(favorite);
+      const key = buildPlaceKey(place);
+      if (!byKey.has(key)) {
+        byKey.set(key, place);
+      }
+    }
+    return [...byKey.values()];
+  }, [places, favorites, activeCategories]);
+
+  const mapPlaces = useMemo(() => {
+    if (!selectedPlaceDetails) return mapSourcePlaces;
+    const selectedKey = buildPlaceKey(selectedPlaceDetails);
+    const exists = mapSourcePlaces.some((item) => buildPlaceKey(item) === selectedKey);
+    return exists
+      ? mapSourcePlaces
+      : [...mapSourcePlaces, { ...selectedPlaceDetails, distance: selectedPlace?.distance ?? effectiveDistance }];
+  }, [mapSourcePlaces, selectedPlaceDetails, selectedPlace, effectiveDistance]);
+
+  const goToPlace = (place: Place) => {
+    const targetKey = buildPlaceKey(place);
+    if (selectedPlaceKey === targetKey && !selectedFromHistory) {
       closePlaceCard();
       return;
     }
     setSelectedPlaceId(place.id);
+    setSelectedPlaceKey(targetKey);
     setSelectedFromHistory(null);
     setShowRoute(false);
     setFocusPoint({ ...place.coordinates, tick: Date.now() });
@@ -157,23 +250,48 @@ export default function App() {
 
   const closePlaceCard = () => {
     setSelectedPlaceId(null);
+    setSelectedPlaceKey(null);
     setSelectedFromHistory(null);
     setShowRoute(false);
   };
 
   useEffect(() => {
     setSelectedPlaceId(null);
+    setSelectedPlaceKey(null);
     setSelectedFromHistory(null);
     setShowRoute(false);
-  }, [category]);
+  }, [selectedCategories]);
 
-  const openFromHistory = (item: VisitRecord) => {
-    if (selectedPlaceId === item.id) {
+  useEffect(() => {
+    if (!selectedPlaceDetails) return;
+    const historyRecord: ViewedRecord = {
+      id: selectedPlaceDetails.id,
+      name: selectedPlaceDetails.name,
+      category: selectedPlaceDetails.category,
+      description: selectedPlaceDetails.description,
+      photoUrl: selectedPlaceDetails.photoUrl,
+      distance: effectiveDistance,
+      at: new Date().toISOString(),
+      viewedAt: new Date().toISOString(),
+      coordinates: selectedPlaceDetails.coordinates,
+    };
+    setViewedHistory((current) => {
+      const next = [historyRecord, ...current].slice(0, 80);
+      localStorage.setItem(VIEWED_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, [selectedPlaceDetails?.id]);
+
+  const openSavedPlace = (item: VisitRecord | ViewedRecord, panel: 'favorites' | 'viewed') => {
+    const targetKey = buildPlaceKey(item);
+    if (selectedPlaceKey === targetKey) {
       closePlaceCard();
-      setShowHistoryPanel(false);
+      if (panel === 'favorites') setShowFavoritesPanel(false);
+      if (panel === 'viewed') setShowViewedPanel(false);
       return;
     }
     setSelectedPlaceId(item.id);
+    setSelectedPlaceKey(targetKey);
     setSelectedFromHistory({
       id: item.id,
       name: item.name,
@@ -185,12 +303,30 @@ export default function App() {
     });
     setShowRoute(false);
     setFocusPoint({ ...item.coordinates, tick: Date.now() });
-    setShowHistoryPanel(false);
+    if (panel === 'favorites') setShowFavoritesPanel(false);
+    if (panel === 'viewed') setShowViewedPanel(false);
+  };
+
+  const toggleCategory = (item: UiCategory) => {
+    setSelectedCategories((current) => {
+      if (item === 'all') return ['all'];
+      const withoutAll = current.filter((entry) => entry !== 'all');
+      const exists = withoutAll.includes(item);
+      const next = exists ? withoutAll.filter((entry) => entry !== item) : [...withoutAll, item];
+      return next.length ? next : ['all'];
+    });
   };
 
   return (
-    <div className="layout">
-      <aside className="sidebar" onClick={closePlaceCard}>
+    <div className={`layout ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+      <button
+        className="sidebar-collapse-toggle"
+        onClick={() => setIsSidebarCollapsed((current) => !current)}
+        aria-label={isSidebarCollapsed ? 'Expand left panel' : 'Collapse left panel'}
+      >
+        {isSidebarCollapsed ? '›' : '‹'}
+      </button>
+      <aside className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`} onClick={closePlaceCard}>
         <div className="sidebar-top">
           <h1>MapScout</h1>
           <p className="muted">Nearby places guide</p>
@@ -206,10 +342,10 @@ export default function App() {
             {categories.map((item) => (
               <button
                 key={item}
-                className={`${item === category ? 'active' : ''} ${item === 'all' ? 'all-category' : ''}`.trim()}
+                className={`${selectedCategories.includes(item) ? 'active' : ''} ${item === 'all' ? 'all-category' : ''}`.trim()}
                 onClick={(event) => {
                   event.stopPropagation();
-                  setCategory(item);
+                  toggleCategory(item);
                 }}
               >
                 {item}
@@ -220,7 +356,7 @@ export default function App() {
           {location.error && <p className="error">{location.error}</p>}
           {nearbyQuery.isLoading && <p className="muted">Loading nearby places...</p>}
           {!nearbyQuery.isLoading && location.coords && filteredPlaces.length === 0 && (
-            <p className="muted">No places in this category nearby.</p>
+            <p className="muted">No places in selected categories nearby.</p>
           )}
         </div>
         <div className="sidebar-list-host">
@@ -239,7 +375,15 @@ export default function App() {
         <button
           className="history-toggle"
           onClick={() => {
-            setShowHistoryPanel(true);
+            setShowFavoritesPanel(true);
+          }}
+        >
+          Favorites
+        </button>
+        <button
+          className="viewed-history-toggle"
+          onClick={() => {
+            setShowViewedPanel(true);
           }}
         >
           History
@@ -251,7 +395,8 @@ export default function App() {
           focusPoint={focusPoint}
           onSelectPlace={(place: Place) => goToPlace(place)}
           onMapClick={closePlaceCard}
-          selectedPlaceId={selectedPlaceId}
+          selectedPlaceKey={selectedPlaceKey}
+          favoritePlaceKeys={favoritePlaceKeys}
         />
         {selectedPlaceDetails && (
           <section className="map-details-card">
@@ -269,9 +414,9 @@ export default function App() {
               <h3>{selectedPlaceDetails.name}</h3>
               <p className="muted">{selectedPlaceDetails.category}</p>
               <p>{selectedPlaceDetails.description}</p>
-              {selectedPlace && (
+              {location.coords && (
                 <p className="muted">
-                  {Math.round(selectedPlace.distance)} m away, about {estimatedMinutes} min walk
+                  {Math.round(effectiveDistance)} m away, about {estimatedMinutes} min walk
                 </p>
               )}
               {routeQuery.isError && (
@@ -281,8 +426,8 @@ export default function App() {
                 <button onClick={() => setShowRoute((current) => !current)}>
                   {showRoute ? 'Hide route' : 'Build route'}
                 </button>
-                <button onClick={toggleVisit}>
-                  {isVisited ? 'Remove from visited' : 'Add to visited'}
+                <button onClick={toggleFavorite}>
+                  {isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                 </button>
                 {location.coords && (
                   <a
@@ -298,35 +443,58 @@ export default function App() {
             </div>
           </section>
         )}
-        <aside className={`history-drawer ${showHistoryPanel ? 'open' : ''}`}>
-          <button className="back-button" onClick={() => setShowHistoryPanel(false)}>
+        <aside className={`history-drawer ${showFavoritesPanel ? 'open' : ''}`}>
+          <button className="back-button" onClick={() => setShowFavoritesPanel(false)}>
             ← Back
           </button>
-          <h3>Visited places</h3>
-          {!history.length && <p className="muted">No visits yet.</p>}
-          {history.map((item) => (
+          <h3>Favorite places</h3>
+          {!favorites.length && <p className="muted">No favorites yet.</p>}
+          {favorites.map((item) => (
             <div
               key={`${item.id}-${item.at}`}
               className="history-row"
-              onClick={() => openFromHistory(item)}
+              onClick={() => openSavedPlace(item, 'favorites')}
               role="button"
               tabIndex={0}
             >
               <button className="history-open">
                 <b>{item.name}</b>
               </button>
+              <span className="history-category">{item.category}</span>
               <span>{new Date(item.at).toLocaleString()}</span>
               <div className="history-actions">
                 <button
                   className="history-action danger"
                   onClick={(event) => {
                     event.stopPropagation();
-                    removeVisit(item.id);
+                    removeFavorite(item);
                   }}
                 >
                   Remove
                 </button>
               </div>
+            </div>
+          ))}
+        </aside>
+        <aside className={`viewed-history-drawer ${showViewedPanel ? 'open' : ''}`}>
+          <button className="back-button" onClick={() => setShowViewedPanel(false)}>
+            ← Back
+          </button>
+          <h3>Viewed places history</h3>
+          {!viewedHistory.length && <p className="muted">No viewed places yet.</p>}
+          {viewedHistory.map((item) => (
+            <div
+              key={`${item.id}-${item.viewedAt}`}
+              className="history-row"
+              onClick={() => openSavedPlace(item, 'viewed')}
+              role="button"
+              tabIndex={0}
+            >
+              <button className="history-open">
+                <b>{item.name}</b>
+              </button>
+              <span className="history-category">{item.category}</span>
+              <span>{new Date(item.viewedAt).toLocaleString()}</span>
             </div>
           ))}
         </aside>
